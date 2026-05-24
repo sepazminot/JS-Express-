@@ -7,6 +7,8 @@ WORKDIR /usr/src/app
 # Copiar archivos de dependencias primero para aprovechar el cache de Docker
 COPY package*.json ./
 
+ENV NODE_ENV=production
+
 # Instalar dependencias de producción únicamente
 RUN npm install --omit=dev
 

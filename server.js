@@ -3,6 +3,8 @@ import express from 'express';
 import pg from 'pg';
 import cors from 'cors';
 
+process.env.NODE_ENV === 'production' && console.log('⚠️  Running in production mode');
+
 const { Pool } = pg;
 const app = express();
 
@@ -21,6 +23,9 @@ app.use(express.json());
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+    max: 20,              // máximo conexiones simultáneas
+    idleTimeoutMillis: 300000,
+    connectionTimeoutMillis: 5000,
 });
 
 // Verificar conexión a BD
@@ -268,18 +273,15 @@ app.put('/facturas/:id', async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // Verificar si existe la factura
-        const checkResult = await client.query('SELECT id FROM facturas WHERE id = $1', [id]);
-        if (checkResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
-
         // Actualizar factura
-        await client.query(
+        const facturaResult = await client.query(
             'UPDATE facturas SET num_factura = $1, customer = $2, employee = $3 WHERE id = $4',
             [num_factura, customer, employee, id]
         );
+        if (facturaResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Factura no encontrada' });
+        }
 
         // Actualizar detalle
         const detalleResult = await client.query(
@@ -325,35 +327,17 @@ app.put('/facturas/:id', async (req, res) => {
 // DELETE - Eliminar factura
 app.delete('/facturas/:id', async (req, res) => {
     const id = parseInt(req.params.id);
-
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-
-    const client = await pool.connect();
+    if (isNaN(id)) return res.status(400).json({ error: 'ID inválido' });
 
     try {
-        await client.query('BEGIN');
-
-        // Verificar si existe
-        const checkResult = await client.query('SELECT id FROM facturas WHERE id = $1', [id]);
-        if (checkResult.rows.length === 0) {
-            await client.query('ROLLBACK');
+        // ── CASCADE elimina el detalle, RowsAffected verifica existencia ───────
+        const result = await pool.query('DELETE FROM facturas WHERE id = $1', [id]);
+        if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Factura no encontrada' });
         }
-
-        // Eliminar (ON DELETE CASCADE eliminará el detalle automáticamente)
-        await client.query('DELETE FROM facturas WHERE id = $1', [id]);
-
-        await client.query('COMMIT');
-
-        res.json({ message: 'Factura eliminada correctamente', id: id });
+        res.json({ message: 'Factura eliminada correctamente', id });
     } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Database error:', err);
         res.status(500).json({ error: 'Error al eliminar la factura' });
-    } finally {
-        client.release();
     }
 });
 

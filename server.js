@@ -278,10 +278,10 @@ app.put('/facturas/:id', async (req, res) => {
             'UPDATE facturas SET num_factura = $1, customer = $2, employee = $3 WHERE id = $4',
             [num_factura, customer, employee, id]
         );
-        if (facturaResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
+        if (facturaResult.rowCount === 0) { 
+    await client.query('ROLLBACK');
+    return res.status(404).json({ error: 'Factura no encontrada' });
+}
 
         // Actualizar detalle
         const detalleResult = await client.query(

@@ -28,262 +28,151 @@ const pool = new Pool({
     connectionTimeoutMillis: 5000,
 });
 
-// Verificar conexión a BD
-pool.connect((err, client, release) => {
-    if (err) {
-        console.error('Error connecting to database:', err.stack);
-    } else {
-        console.log('Connected to database successfully');
-        release();
-    }
-});
+// ==================== USUARIOS ====================\
 
-// ==================== USUARIOS ====================
-
-// GET - Obtener usuario por ID
+// GET - Obtener usuario
 app.get('/users/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
-
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-
     try {
-        const result = await pool.query('SELECT id, email, password FROM users WHERE id = $1', [id]);
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario no encontrado' });
-        }
-
+        const result = await pool.query('SELECT id, email, password FROM users WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
         res.json(result.rows[0]);
     } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Error interno del servidor' });
+        res.status(500).json({ error: 'Error al obtener usuario' });
     }
 });
 
 // POST - Crear usuario
 app.post('/users', async (req, res) => {
     const { email, password } = req.body;
-
-    if (!email || !password) {
-        return res.status(400).json({ error: 'Email y password son requeridos' });
-    }
-
     try {
         const result = await pool.query(
             'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email, password',
             [email, password]
         );
-
         res.status(201).json(result.rows[0]);
     } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Error al crear el usuario' });
+        res.status(500).json({ error: 'Error al crear usuario' });
     }
 });
 
-// PUT - Actualizar usuario
+// PUT - Actualizar usuario (Lógica simplificada: siempre van ambos campos)
 app.put('/users/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
     const { email, password } = req.body;
-
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-
-    if (!email && !password) {
-        return res.status(400).json({ error: 'Email o password son requeridos para actualizar' });
-    }
-
     try {
-        let query;
-        let params;
-
-        if (email && password) {
-            query = 'UPDATE users SET email = $1, password = $2 WHERE id = $3 RETURNING id, email, password';
-            params = [email, password, id];
-        } else if (email) {
-            query = 'UPDATE users SET email = $1 WHERE id = $2 RETURNING id, email, password';
-            params = [email, id];
-        } else {
-            query = 'UPDATE users SET password = $1 WHERE id = $2 RETURNING id, email, password';
-            params = [password, id];
-        }
-
-        const result = await pool.query(query, params);
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario no encontrado' });
-        }
-
+        const result = await pool.query(
+            'UPDATE users SET email = $1, password = $2 WHERE id = $3 RETURNING id, email, password',
+            [email, password, req.params.id]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
         res.json(result.rows[0]);
     } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Error al actualizar el usuario' });
+        res.status(500).json({ error: 'Error al actualizar usuario' });
     }
 });
 
 // DELETE - Eliminar usuario
 app.delete('/users/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
-
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-
     try {
-        const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario no encontrado' });
-        }
-
-        res.json({ message: 'Usuario eliminado correctamente', id: result.rows[0].id });
+        const result = await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+        res.json({ message: 'Usuario eliminado' });
     } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Error al eliminar el usuario' });
+        res.status(500).json({ error: 'Error al eliminar usuario' });
     }
 });
 
-// ==================== FACTURAS ====================
+// ==================== FACTURAS (MAESTRO-DETALLE) ====================\
 
-// GET - Obtener factura por ID (con detalle)
+// GET - Obtener factura con su único detalle
 app.get('/facturas/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
-
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-
     try {
         const query = `
             SELECT f.id, f.num_factura, f.customer, f.employee,
-                   d.id as detail_id, d.factura_id, d.product, d.quantity, d.price, d.total
+                   d.id AS detail_id, d.product, d.quantity, d.price, d.total
             FROM facturas f
             INNER JOIN detalles d ON d.factura_id = f.id
-            WHERE f.id = $1
-        `;
-
-        const result = await pool.query(query, [id]);
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
+            WHERE f.id = $1`;
+        
+        const result = await pool.query(query, [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Factura no encontrada' });
 
         const row = result.rows[0];
-        const factura = {
+        res.json({
             id: row.id,
             num_factura: row.num_factura,
             customer: row.customer,
             employee: row.employee,
             detail: {
                 id: row.detail_id,
-                factura_id: row.factura_id,
+                factura_id: row.id,
                 product: row.product,
                 quantity: row.quantity,
                 price: parseFloat(row.price),
                 total: parseFloat(row.total)
             }
-        };
-
-        res.json(factura);
+        });
     } catch (err) {
-        console.error('Database error:', err);
-        res.status(500).json({ error: 'Error interno del servidor' });
+        res.status(500).json({ error: 'Error al obtener factura' });
     }
 });
 
-// POST - Crear factura con detalle (transaccional)
+// POST - Crear Factura y Detalle (Transaccional)
 app.post('/facturas', async (req, res) => {
     const { num_factura, customer, employee, detail } = req.body;
-
-    // Validaciones
-    if (!num_factura || !customer || !employee || !detail) {
-        return res.status(400).json({ error: 'Todos los campos son requeridos' });
-    }
-
-    if (!detail.product || !detail.quantity || !detail.price || !detail.total) {
-        return res.status(400).json({ error: 'Datos de detalle incompletos' });
-    }
-
     const client = await pool.connect();
 
     try {
         await client.query('BEGIN');
 
-        // Insertar factura
+        // 1. Insertar Maestro
         const facturaResult = await client.query(
             'INSERT INTO facturas (num_factura, customer, employee) VALUES ($1, $2, $3) RETURNING id, num_factura, customer, employee',
             [num_factura, customer, employee]
         );
+        const nuevaFactura = facturaResult.rows[0];
 
-        const factura = facturaResult.rows[0];
-
-        // Insertar detalle
+        // 2. Insertar Detalle único usando el ID recién creado
         const detalleResult = await client.query(
-            `INSERT INTO detalles (factura_id, product, quantity, price, total) 
-             VALUES ($1, $2, $3, $4, $5) 
-             RETURNING id, factura_id, product, quantity, price, total`,
-            [factura.id, detail.product, detail.quantity, detail.price, detail.total]
+            'INSERT INTO detalles (factura_id, product, quantity, price, total) VALUES ($1, $2, $3, $4, $5) RETURNING id, product, quantity, price, total',
+            [nuevaFactura.id, detail.product, detail.quantity, detail.price, detail.total]
         );
+        const nuevoDetalle = detalleResult.rows[0];
 
         await client.query('COMMIT');
 
-        const response = {
-            id: factura.id,
-            num_factura: factura.num_factura,
-            customer: factura.customer,
-            employee: factura.employee,
-            detail: {
-                id: detalleResult.rows[0].id,
-                factura_id: detalleResult.rows[0].factura_id,
-                product: detalleResult.rows[0].product,
-                quantity: detalleResult.rows[0].quantity,
-                price: parseFloat(detalleResult.rows[0].price),
-                total: parseFloat(detalleResult.rows[0].total)
-            }
-        };
-
-        res.status(201).json(response);
+        res.status(201).json({
+            ...nuevaFactura,
+            detail: { ...nuevoDetalle, price: parseFloat(nuevoDetalle.price), total: parseFloat(nuevoDetalle.total) }
+        });
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error('Transaction error:', err);
-        res.status(500).json({ error: 'Error al crear la factura y su detalle' });
+        res.status(500).json({ error: 'Error al crear la factura transaccional' });
     } finally {
         client.release();
     }
 });
 
-// PUT - Actualizar factura completa
+// PUT - Actualizar Factura y Detalle (Transaccional - CORREGIDO)
 app.put('/facturas/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
+    const id = req.params.id;
     const { num_factura, customer, employee, detail } = req.body;
-
-    if (isNaN(id)) {
-        return res.status(400).json({ error: 'ID inválido' });
-    }
-
-    if (!num_factura || !customer || !employee || !detail) {
-        return res.status(400).json({ error: 'Todos los campos son requeridos' });
-    }
-
     const client = await pool.connect();
 
     try {
         await client.query('BEGIN');
 
-        // Actualizar factura
+        // 1. Actualizar Maestro (Se corrigió el bug de rows.length usando rowCount)
         const facturaResult = await client.query(
             'UPDATE facturas SET num_factura = $1, customer = $2, employee = $3 WHERE id = $4',
             [num_factura, customer, employee, id]
         );
-        if (facturaResult.rows.length === 0) {
+
+        if (facturaResult.rowCount === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Factura no encontrada' });
         }
 
-        // Actualizar detalle
+        // 2. Actualizar Detalle único (Devuelve el ID para la respuesta exacta)
         const detalleResult = await client.query(
             `UPDATE detalles 
              SET product = $1, quantity = $2, price = $3, total = $4 
@@ -292,58 +181,45 @@ app.put('/facturas/:id', async (req, res) => {
             [detail.product, detail.quantity, detail.price, detail.total, id]
         );
 
-        if (detalleResult.rows.length === 0) {
+        if (detalleResult.rowCount === 0) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Detalle no encontrado para esta factura' });
+            return res.status(404).json({ error: 'Detalle no encontrado' });
         }
 
+        const detalleActualizado = detalleResult.rows[0];
         await client.query('COMMIT');
 
-        const response = {
-            id: id,
-            num_factura: num_factura,
-            customer: customer,
-            employee: employee,
+        res.json({
+            id: parseInt(id),
+            num_factura,
+            customer,
+            employee,
             detail: {
-                id: detalleResult.rows[0].id,
-                factura_id: detalleResult.rows[0].factura_id,
-                product: detalleResult.rows[0].product,
-                quantity: detalleResult.rows[0].quantity,
-                price: parseFloat(detalleResult.rows[0].price),
-                total: parseFloat(detalleResult.rows[0].total)
+                id: detalleActualizado.id,
+                factura_id: detalleActualizado.factura_id,
+                product: detalleActualizado.product,
+                quantity: detalleActualizado.quantity,
+                price: parseFloat(detalleActualizado.price),
+                total: parseFloat(detalleActualizado.total)
             }
-        };
-
-        res.json(response);
+        });
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error('Transaction error:', err);
         res.status(500).json({ error: 'Error al actualizar la factura' });
     } finally {
         client.release();
     }
 });
 
-// DELETE - Eliminar factura
+// DELETE - Eliminar factura (Eliminación en cascada en la BD)
 app.delete('/facturas/:id', async (req, res) => {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: 'ID inválido' });
-
     try {
-        // ── CASCADE elimina el detalle, RowsAffected verifica existencia ───────
-        const result = await pool.query('DELETE FROM facturas WHERE id = $1', [id]);
-        if (result.rowCount === 0) {
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
-        res.json({ message: 'Factura eliminada correctamente', id });
+        const result = await pool.query('DELETE FROM facturas WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Factura no encontrada' });
+        res.json({ message: 'Factura eliminada correctamente' });
     } catch (err) {
         res.status(500).json({ error: 'Error al eliminar la factura' });
     }
-});
-
-// Health check
-app.get('/health', (req, res) => {
-    res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
 // Puerto
